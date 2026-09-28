@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI4VPrimer Amplicon-Sanger Suite</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: #1e293b;
+            --text-main: #f8fafc;
+            --accent-blue: #38bdf8;
+            --accent-green: #4ade80;
+            --accent-orange: #fb923c;
+            --border-color: #334155;
+        }
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding-bottom: 60px;
+        }
+        .header-hero {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-bottom: 1px solid var(--border-color);
+            padding: 2.5rem 0;
+            margin-bottom: 2rem;
+        }
+        .card-custom {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+            margin-bottom: 1.5rem;
+        }
+        .form-control, .form-select {
+            background-color: #0f172a;
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+        }
+        .form-control:focus, .form-select:focus {
+            background-color: #0f172a;
+            border-color: var(--accent-blue);
+            color: var(--text-main);
+            box-shadow: 0 0 0 0.25rem rgba(56, 189, 248, 0.25);
+        }
+        .badge-tier1 {
+            background-color: rgba(74, 222, 128, 0.15);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+        .badge-tier2 {
+            background-color: rgba(251, 146, 60, 0.15);
+            color: var(--accent-orange);
+            border: 1px solid var(--accent-orange);
+        }
+        .nav-tabs .nav-link {
+            color: #94a3b8;
+            border: none;
+            padding: 0.8rem 1.2rem;
+            font-weight: 500;
+        }
+        .nav-tabs .nav-link.active {
+            background-color: transparent;
+            color: var(--accent-blue);
+            border-bottom: 3px solid var(--accent-blue);
+        }
+        #reportViewer {
+            background-color: #111827;
+            border-radius: 8px;
+            padding: 2rem;
+            border: 1px solid var(--border-color);
+            font-size: 0.96rem;
+            line-height: 1.65;
+            color: #ffffff; /* Crisp Pure White Default Text */
+        }
+        #reportViewer p, #reportViewer li, #reportViewer div {
+            color: #ffffff; /* Crisp Pure White for all paragraphs & lists */
+        }
+        #reportViewer h1, #reportViewer h2 {
+            color: #38bdf8; /* Bright Cyan Headings */
+            font-weight: 700;
+            margin-top: 1.5rem;
+            margin-bottom: 0.8rem;
+        }
+        #reportViewer h3, #reportViewer h4 {
+            color: #fde047; /* Bright Vibrant Yellow Subheadings */
+            font-weight: 600;
+            margin-top: 1.3rem;
+            margin-bottom: 0.6rem;
+        }
+        #reportViewer strong, #reportViewer b {
+            color: #fef08a; /* High-contrast Warm Yellow for Bold & Key Numbers */
+            font-weight: 700;
+        }
+        #reportViewer table {
+            display: block;
+            width: 100%;
+            overflow-x: auto;
+            white-space: nowrap;
+            margin: 1.5rem 0;
+            border-collapse: collapse;
+            font-size: 0.90rem;
+        }
+        #reportViewer th, #reportViewer td {
+            border: 1px solid #374151;
+            padding: 0.6rem 0.9rem;
+            vertical-align: middle;
+        }
+        #reportViewer th {
+            background-color: #1f2937;
+            color: #38bdf8; /* Cyan Headers */
+            font-weight: 600;
+        }
+        #reportViewer td {
+            background-color: #111827;
+            color: #ffffff; /* Pure White Table Text */
+        }
+        #reportViewer code {
+            color: #38bdf8; /* Bright Cyan for primer codes and sequence tags */
+            background-color: #1e293b;
+            padding: 0.15rem 0.45rem;
+            border-radius: 4px;
+            font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 0.9em;
+        }
+        #reportViewer pre {
+            background-color: #0b0f17;
+            border: 1px solid #374151;
+            padding: 1rem;
+            border-radius: 6px;
+            color: #fde047; /* Bright Yellow for TSV synthesis order block */
+        }
+        #reportViewer pre code {
+            color: #fde047;
+            background-color: transparent;
+            padding: 0;
+        }
+        #reportViewer hr {
+            border-color: #374151;
+            margin: 1.8rem 0;
+        }
+    </style>
+</head>
+<body>
+
+<header class="header-hero">
+    <div class="container">
+        <div class="d-flex align-items-center justify-content-between">
+            <div>
+                <h2 class="fw-bold mb-1"><i class="fa-solid fa-dna text-info me-2"></i>AI4VPrimer Amplicon-Sanger Suite</h2>
+                <p class="text-secondary mb-0">High-Fidelity Sanger Sequencing Primer Design for Viral Surveillance & Mixture Deconvolution</p>
+            </div>
+            <div>
+                <span class="badge badge-tier1 p-2 me-2"><i class="fa-solid fa-circle-check me-1"></i>0 Degeneracy Standard</span>
+                <span class="badge badge-tier2 p-2"><i class="fa-solid fa-triangle-exclamation me-1"></i>2x Concentration Fallback</span>
+            </div>
+        </div>
+    </div>
+</header>
+
+<main class="container">
+    <div class="row">
+        <!-- Left: Configuration Form -->
+        <div class="col-lg-5">
+            <div class="card card-custom p-4">
+                <h5 class="fw-bold mb-3"><i class="fa-solid fa-sliders text-info me-2"></i>Pipeline Configuration</h5>
+                
+                <form id="pipelineForm">
+                    <div class="alert alert-info py-2 px-3 mb-3 small d-flex align-items-center" style="background-color: rgba(56, 189, 248, 0.1); border-color: rgba(56, 189, 248, 0.3); color: #bae6fd;">
+                        <i class="fa-solid fa-lightbulb text-info me-2 fs-5"></i>
+                        <div>
+                            <strong>Recommended:</strong> Upload a pre-aligned FASTA (e.g. from MAFFT or MUSCLE). When pre-aligned, the pipeline runs across <strong>100% of all sequences</strong> without any subsampling!
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small text-secondary">Aligned FASTA File Path *</label>
+                        <input type="text" class="form-control" id="fastaPath" placeholder="/Users/.../aligned.fasta" required>
+                        <div class="form-text text-secondary" style="font-size: 0.75rem;">Must be pre-aligned (e.g. MAFFT/MUSCLE).</div>
+                    </div>
+
+                    <!-- PCR Workflow Selection -->
+                    <div class="mb-3">
+                        <label class="form-label small text-secondary">PCR Amplicon Mode</label>
+                        <select class="form-select" id="pcrMode" onchange="togglePcrMode()">
+                            <option value="pathA" selected>Path A: External PCR Primers Provided</option>
+                            <option value="pathB">Path B: Auto / Whole-Gene Alignment Mode</option>
+                        </select>
+                    </div>
+
+                    <div id="pathAFields">
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small text-secondary">Forward PCR Primer (5'→3')</label>
+                                <input type="text" class="form-control font-monospace" id="fwdPcr" placeholder="e.g. ATGCGATCG...">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-secondary">Reverse PCR Primer (5'→3')</label>
+                                <input type="text" class="form-control font-monospace" id="revPcr" placeholder="e.g. CGTAACGTA...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-3">
+
+                    <h6 class="fw-bold small text-info mb-2"><i class="fa-solid fa-crosshairs me-1"></i>Sequencing Scope (Variable Region / Hotspot)</h6>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small text-secondary">Target Subregion Start (Alignment col)</label>
+                            <input type="number" class="form-control" id="targetStart" placeholder="Optional (e.g. 400)">
+                            <div class="form-text text-secondary" style="font-size: 0.72rem;">Position in aligned FASTA (from AliView/MEGA).</div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small text-secondary">Target Subregion End (Alignment col)</label>
+                            <input type="number" class="form-control" id="targetEnd" placeholder="Optional (e.g. 600)">
+                            <div class="form-text text-secondary" style="font-size: 0.72rem;">Primers placed ≥50 bp outside for clean dye-blob clearance.</div>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-3">
+
+                    <h6 class="fw-bold small text-info mb-2"><i class="fa-solid fa-filter me-1"></i>Biophysical Filters & Thresholds</h6>
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <label class="form-label small text-secondary">Min Cov (%)</label>
+                            <input type="number" class="form-control" id="minCov" value="80" step="1">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small text-secondary">Min Tm (°C)</label>
+                            <input type="number" class="form-control" id="minTm" value="55.0" step="0.5">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small text-secondary">Max Tm (°C)</label>
+                            <input type="number" class="form-control" id="maxTm" value="60.0" step="0.5">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small text-secondary">Output Report Path (.md)</label>
+                        <input type="text" class="form-control" id="outPath" placeholder="/Users/.../sanger_report.md">
+                    </div>
+
+                    <button type="submit" class="btn btn-info w-100 py-2 fw-bold text-dark" id="runBtn">
+                        <i class="fa-solid fa-play me-2"></i>Run Sanger Design Engine
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Right: Results & Output Viewer -->
+        <div class="col-lg-7">
+            <div class="card card-custom p-4">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <h5 class="fw-bold mb-0"><i class="fa-solid fa-file-lines text-info me-2"></i>Generated Primer Report</h5>
+                    <div id="statusBadge">
+                        <span class="badge bg-secondary">Awaiting Run</span>
+                    </div>
+                </div>
+
+                <div id="reportViewer">
+                    <div class="text-center py-5 text-secondary">
+                        <i class="fa-solid fa-flask-vial fa-3x mb-3 text-muted"></i>
+                        <p>Configure the parameters on the left and click <strong>Run Sanger Design Engine</strong> to generate universal primers, strain-specific mixture panels, and tiling maps.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+function togglePcrMode() {
+    const mode = document.getElementById('pcrMode').value;
+    const pathA = document.getElementById('pathAFields');
+    if (mode === 'pathB') {
+        pathA.style.display = 'none';
+    } else {
+        pathA.style.display = 'block';
+    }
+}
+
+document.getElementById('pipelineForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = document.getElementById('runBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const viewer = document.getElementById('reportViewer');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Designing Primers...';
+    statusBadge.innerHTML = '<span class="badge bg-primary"><i class="fa-solid fa-spinner fa-spin me-1"></i>Running</span>';
+
+    const payload = {
+        fasta_path: document.getElementById('fastaPath').value.trim(),
+        fwd_pcr: document.getElementById('pcrMode').value === 'pathA' ? document.getElementById('fwdPcr').value.trim() : null,
+        rev_pcr: document.getElementById('pcrMode').value === 'pathA' ? document.getElementById('revPcr').value.trim() : null,
+        target_start: document.getElementById('targetStart').value ? parseInt(document.getElementById('targetStart').value) : null,
+        target_end: document.getElementById('targetEnd').value ? parseInt(document.getElementById('targetEnd').value) : null,
+        min_cov: parseFloat(document.getElementById('minCov').value),
+        min_tm: parseFloat(document.getElementById('minTm').value),
+        max_tm: parseFloat(document.getElementById('maxTm').value),
+        out_path: document.getElementById('outPath').value.trim() || null
+    };
+
+    try {
+        const resp = await fetch('/api/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+
+        if (data.status === 'SUCCESS') {
+            statusBadge.innerHTML = '<span class="badge bg-success"><i class="fa-solid fa-check me-1"></i>Completed</span>';
+            viewer.innerHTML = marked.parse(data.report);
+        } else {
+            statusBadge.innerHTML = '<span class="badge bg-danger">Error</span>';
+            viewer.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation me-2"></i>${data.message}</div>`;
+        }
+    } catch (err) {
+        statusBadge.innerHTML = '<span class="badge bg-danger">Network Error</span>';
+        viewer.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-circle-exclamation me-2"></i>Failed to contact server: ${err.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-play me-2"></i>Run Sanger Design Engine';
+    }
+});
+</script>
+
+</body>
+</html>

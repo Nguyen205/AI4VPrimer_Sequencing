@@ -1,0 +1,4 @@
+biopython>=1.79
+numpy>=1.21
+primer3-py>=0.6.1
+flask>=3.0
