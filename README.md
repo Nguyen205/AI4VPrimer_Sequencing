@@ -35,8 +35,8 @@ Automated Sanger sequencing primer design for viral surveillance amplicons, stra
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/Amplicon_Sanger_Primer_Suite.git
-cd Amplicon_Sanger_Primer_Suite
+git clone https://github.com/Pluto-Aijia/AI4VPrimer_Sequencing.git
+cd AI4VPrimer_Sequencing
 
 # Install dependencies
 pip install -r requirements.txt
