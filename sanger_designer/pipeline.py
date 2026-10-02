@@ -31,15 +31,14 @@ class SangerAmpliconPipeline:
         max_tm: float = 60.0,
         output_report_path: Optional[str] = None
     ):
-        self.fasta_path = fasta_path
-        self.fwd_pcr_primer = fwd_pcr_primer
-        self.rev_pcr_primer = rev_pcr_primer
+        self.fasta_path = fasta_path.strip().strip('"').strip("'") if fasta_path else ""
+        self.fwd_pcr_primer = fwd_pcr_primer.strip() if fwd_pcr_primer else None
+        self.rev_pcr_primer = rev_pcr_primer.strip() if rev_pcr_primer else None
         self.target_subregion_start = target_subregion_start
         self.target_subregion_end = target_subregion_end
         self.min_coverage_pct = min_coverage_pct
         self.min_tm = min_tm
-        self.max_tm = max_tm
-        self.output_report_path = output_report_path
+        self.output_report_path = output_report_path.strip().strip('"').strip("'").replace('\\', '/') if output_report_path else None
 
         # Submodules
         self.universal_designer = UniversalSangerDesigner(
@@ -139,6 +138,12 @@ class SangerAmpliconPipeline:
 
         # Step 5: Full-Dataset Cross-Validation & 2% Tolerance Gate
         full_fasta_path = self.fasta_path
+        clean_full = full_fasta_path.replace('\\', '/')
+        if clean_full.endswith("_aligned.fasta"):
+            raw_candidate = full_fasta_path[:-len("_aligned.fasta")] + ".fasta"
+            if os.path.exists(raw_candidate):
+                full_fasta_path = raw_candidate
+
         total_full_seqs = 0
         from Bio import SeqIO
         import re
@@ -256,10 +261,13 @@ class SangerAmpliconPipeline:
         results["report_content"] = markdown_report
 
         if self.output_report_path:
-            os.makedirs(os.path.dirname(os.path.abspath(self.output_report_path)), exist_ok=True)
-            with open(self.output_report_path, "w") as f:
+            clean_out = self.output_report_path.replace('\\', '/')
+            out_dir = os.path.dirname(os.path.abspath(clean_out))
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            with open(clean_out, "w", encoding="utf-8") as f:
                 f.write(markdown_report)
-            results["report_path"] = self.output_report_path
+            results["report_path"] = clean_out
 
         return results
 
