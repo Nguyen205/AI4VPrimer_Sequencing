@@ -4,16 +4,14 @@ Flask web application for AI4VPrimer Amplicon-Sanger Suite.
 Provides a modern no-code browser interface for running Sanger primer designs.
 """
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import webbrowser
 import threading
 import os
+import re
 from sanger_designer.pipeline import SangerAmpliconPipeline
 
 app = Flask(__name__, template_folder="templates")
-
-
-import re
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -31,14 +29,22 @@ def sanitize_input_path(raw_path: str) -> str:
         # On Windows, file:///C:/path -> C:/path
         if len(p) > 2 and p[0] == '/' and p[2] == ':':
             p = p[1:]
-    # Expand user home dir ~
-    p = os.path.expanduser(p)
-    # Check direct or normalized path
+    # Convert Windows backslashes to forward slashes
+    p = p.replace('\\', '/')
+    # Clean repeated slashes after drive letter (e.g. C:// -> C:/)
+    if len(p) > 2 and p[1] == ':':
+        drive = p[:2]
+        rest = re.sub(r'/+', '/', p[2:])
+        p = drive + rest
+    else:
+        if p.startswith('~'):
+            p = os.path.expanduser(p).replace('\\', '/')
+
     if os.path.exists(p):
-        return os.path.abspath(p)
+        return os.path.abspath(p).replace('\\', '/')
     norm = os.path.normpath(p)
     if os.path.exists(norm):
-        return os.path.abspath(norm)
+        return os.path.abspath(norm).replace('\\', '/')
     return p
 
 
@@ -63,7 +69,7 @@ def upload_file_api():
         if not clean_name:
             clean_name = "uploaded_sequence.fasta"
         
-        dest_path = os.path.join(UPLOAD_DIR, clean_name)
+        dest_path = os.path.join(UPLOAD_DIR, clean_name).replace('\\', '/')
         file.save(dest_path)
         
         return jsonify({
@@ -101,6 +107,17 @@ def run_pipeline_api():
         max_tm = float(data.get("max_tm", 60.0))
         out_path = sanitize_input_path(data.get("out_path", "")) or None
 
+        if out_path:
+            out_dir = os.path.dirname(os.path.abspath(out_path))
+            if out_dir:
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                except Exception:
+                    pass
+
+        default_report_path = os.path.join(UPLOAD_DIR, "latest_sanger_report.md").replace('\\', '/')
+        actual_out_path = out_path or default_report_path
+
         pipeline = SangerAmpliconPipeline(
             fasta_path=fasta_path,
             fwd_pcr_primer=fwd_pcr,
@@ -110,7 +127,7 @@ def run_pipeline_api():
             min_coverage_pct=min_cov,
             min_tm=min_tm,
             max_tm=max_tm,
-            output_report_path=out_path
+            output_report_path=actual_out_path
         )
 
         res = pipeline.run()
@@ -118,6 +135,7 @@ def run_pipeline_api():
         return jsonify({
             "status": "SUCCESS",
             "report": res["report_content"],
+            "report_path": res.get("report_path", actual_out_path),
             "pcr_info": res["pcr_info"],
             "tiling_info": res["tiling_info"]
         })
@@ -127,6 +145,21 @@ def run_pipeline_api():
             "status": "ERROR",
             "message": str(e)
         }), 500
+
+
+@app.route("/api/download-report", methods=["GET"])
+def download_report_api():
+    """Download the generated markdown report directly from the browser."""
+    path = request.args.get("path", "")
+    if path:
+        target = sanitize_input_path(path)
+        if os.path.isfile(target):
+            return send_file(target, as_attachment=True, download_name=os.path.basename(target))
+    # Fallback to default latest report
+    default_report = os.path.join(UPLOAD_DIR, "latest_sanger_report.md")
+    if os.path.isfile(default_report):
+        return send_file(default_report, as_attachment=True, download_name="sanger_report.md")
+    return jsonify({"status": "ERROR", "message": "No report found to download"}), 404
 
 
 def open_browser():
