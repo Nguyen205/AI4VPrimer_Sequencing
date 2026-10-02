@@ -271,7 +271,10 @@
 
                     <div class="mb-3">
                         <label class="form-label small text-secondary">Output Report Path (.md)</label>
-                        <input type="text" class="form-control" id="outPath" placeholder="/Users/.../sanger_report.md">
+                        <input type="text" class="form-control font-monospace" id="outPath" placeholder="C:\Users\...\sanger_report.md or /Users/.../sanger_report.md" oninput="cleanPastedPath(this)">
+                        <div class="form-text text-secondary" style="font-size: 0.72rem;">
+                            Optional: Enter any Windows (<code>C:\...</code>) or Mac (<code>/Users/...</code>) path. Parent folders will be created automatically.
+                        </div>
                     </div>
 
                     <button type="submit" class="btn btn-info w-100 py-2 fw-bold text-dark" id="runBtn">
@@ -332,8 +335,29 @@ function switchInputMethod(method) {
     }
 }
 
+let currentReportMarkdown = '';
+let currentReportPath = '';
+
+function downloadCurrentReport() {
+    if (!currentReportMarkdown) return;
+    const blob = new Blob([currentReportMarkdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    let filename = 'sanger_report.md';
+    if (currentReportPath) {
+        filename = currentReportPath.split('/').pop().split('\\').pop() || 'sanger_report.md';
+    }
+    if (!filename.endsWith('.md')) filename += '.md';
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 function cleanPastedPath(input) {
-    if (!input.value) return;
+    if (!input || !input.value) return;
     let p = input.value.trim();
     // Strip surrounding quotes ("path" or 'path')
     if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
@@ -345,6 +369,13 @@ function cleanPastedPath(input) {
         if (!(p.length > 2 && p[1] === ':')) {
             p = '/' + p;
         }
+    } else if (p.startsWith('file://')) {
+        p = p.substring(7);
+    }
+    // Convert backslashes to forward slashes
+    p = p.replace(/\\/g, '/');
+    if (/^[a-zA-Z]:\/\//.test(p)) {
+        p = p[0] + p[1] + p.slice(2).replace(/\/+/g, '/');
     }
     input.value = p;
 }
@@ -371,6 +402,14 @@ async function handleFileUpload(input) {
             document.getElementById('fastaPath').value = d.filepath;
             const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
             statusText.innerHTML = `<i class="fa-solid fa-circle-check text-success me-1"></i><strong class="text-success">${file.name}</strong> ready (${sizeMb} MB)`;
+            
+            // Auto-suggest output report path if empty
+            const outPathInput = document.getElementById('outPath');
+            if (outPathInput && !outPathInput.value.trim()) {
+                const dir = d.filepath.substring(0, d.filepath.lastIndexOf('/'));
+                const base = d.filename.replace(/\.[^/.]+$/, "");
+                outPathInput.value = `${dir}/${base}_sanger_report.md`;
+            }
         } else {
             statusText.innerHTML = `<span class="text-danger"><i class="fa-solid fa-circle-exclamation me-1"></i>Upload failed: ${d.message}</span>`;
         }
@@ -446,7 +485,16 @@ document.getElementById('pipelineForm').addEventListener('submit', async functio
         const data = await resp.json();
 
         if (data.status === 'SUCCESS') {
-            statusBadge.innerHTML = '<span class="badge bg-success"><i class="fa-solid fa-check me-1"></i>Completed</span>';
+            currentReportMarkdown = data.report;
+            currentReportPath = data.report_path || payload.out_path || 'sanger_report.md';
+            statusBadge.innerHTML = `
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-success"><i class="fa-solid fa-check me-1"></i>Completed</span>
+                    <button type="button" class="btn btn-sm btn-outline-info" onclick="downloadCurrentReport()" title="Download report markdown file directly">
+                        <i class="fa-solid fa-download me-1"></i>Download Report (.md)
+                    </button>
+                </div>
+            `;
             viewer.innerHTML = marked.parse(data.report);
         } else {
             statusBadge.innerHTML = '<span class="badge bg-danger">Error</span>';
