@@ -7,9 +7,9 @@ and generates comprehensive publication-ready Markdown reports.
 
 from typing import Dict, Optional, List
 import os
-from .msa_utils import load_alignment, reverse_complement
+from .msa_utils import load_alignment, reverse_complement, get_column_frequencies
 from .insilico_pcr import InSilicoPCR
-from .universal_designer import UniversalSangerDesigner
+from .universal_designer import UniversalSangerDesigner, expand_iupac_variants
 from .strain_specific_designer import StrainSpecificSangerDesigner
 from .tiling import SangerTiler
 
@@ -91,9 +91,10 @@ class SangerAmpliconPipeline:
             }
 
         amp_len = len(amplicon_msa[0])
+        col_freqs = get_column_frequencies(amplicon_msa)
 
         # Step 2: Sizing & Tiling Evaluation (Rule 1: <= 1200 bp vs > 1200 bp)
-        tiling_result = self.tiler.evaluate_and_tile(amplicon_msa, self.universal_designer)
+        tiling_result = self.tiler.evaluate_and_tile(amplicon_msa, self.universal_designer, col_freqs=col_freqs)
 
         # Coordinate translation:
         # Users specify nucleotide positions based on the alignment (as seen in MEGA/AliView/Geneious).
@@ -114,7 +115,8 @@ class SangerAmpliconPipeline:
             amplicon_msa,
             direction="FORWARD",
             target_subregion_start=amp_subregion_start,
-            target_subregion_end=amp_subregion_end
+            target_subregion_end=amp_subregion_end,
+            col_freqs=col_freqs
         )
         f_cand = uni_fwd.get("selected_primer")
         f_range = (f_cand["start_col"], f_cand["end_col"]) if f_cand else None
@@ -124,7 +126,8 @@ class SangerAmpliconPipeline:
             direction="REVERSE",
             target_subregion_start=amp_subregion_start,
             target_subregion_end=amp_subregion_end,
-            exclude_range=f_range
+            exclude_range=f_range,
+            col_freqs=col_freqs
         )
 
         # Step 4: Strain-Specific Panel Design (Rule 3: Mixture Deconvolution)
@@ -162,8 +165,16 @@ class SangerAmpliconPipeline:
             if not primer_seq or total_full_seqs == 0:
                 return {"full_count": 0, "total_full": total_full_seqs, "full_pct": 0.0}
             target_seq = reverse_complement(primer_seq) if is_reverse else primer_seq
-            pat = re.compile(iupac_to_regex(target_seq))
-            matched = sum(1 for s in full_seqs_cache if pat.search(s)) if full_seqs_cache else 0
+            is_pure = all(c in "ACGT" for c in target_seq)
+            if is_pure:
+                matched = sum(1 for s in full_seqs_cache if target_seq in s) if full_seqs_cache else 0
+            else:
+                variants = tuple(expand_iupac_variants(target_seq))
+                if len(variants) <= 4:
+                    matched = sum(1 for s in full_seqs_cache if any(v in s for v in variants)) if full_seqs_cache else 0
+                else:
+                    pat = re.compile(iupac_to_regex(target_seq))
+                    matched = sum(1 for s in full_seqs_cache if pat.search(s)) if full_seqs_cache else 0
             pct = round((matched / total_full_seqs) * 100.0, 2)
             return {"full_count": matched, "total_full": total_full_seqs, "full_pct": pct}
 

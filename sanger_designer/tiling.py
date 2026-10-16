@@ -9,6 +9,7 @@ Rule:
 
 from typing import List, Dict, Optional
 from .universal_designer import UniversalSangerDesigner
+from .msa_utils import get_column_frequencies
 
 
 class SangerTiler:
@@ -29,21 +30,25 @@ class SangerTiler:
     def evaluate_and_tile(
         self,
         amplicon_msa: List[str],
-        universal_designer: UniversalSangerDesigner
+        universal_designer: UniversalSangerDesigner,
+        col_freqs: Optional[List[Dict[str, float]]] = None
     ) -> Dict:
         """
         Determines if tiling is required and generates tiled sequencing primers if amplicon > 1200 bp.
         """
         amp_len = len(amplicon_msa[0])
+        if col_freqs is None:
+            col_freqs = get_column_frequencies(amplicon_msa)
+
         is_tiling_required = (amp_len > self.tiling_threshold)
 
         if not is_tiling_required:
             # Single-step terminal reactions suffice
             fwd_res = universal_designer.design_universal_primer(
-                amplicon_msa, direction="FORWARD"
+                amplicon_msa, direction="FORWARD", col_freqs=col_freqs
             )
             rev_res = universal_designer.design_universal_primer(
-                amplicon_msa, direction="REVERSE"
+                amplicon_msa, direction="REVERSE", col_freqs=col_freqs
             )
             return {
                 "amplicon_length": amp_len,
@@ -65,15 +70,16 @@ class SangerTiler:
 
         while current_pos < (amp_len - 300):
             step += 1
-            # For walking step, place primer near current_pos
-            target_start = current_pos + universal_designer.dye_blob_buffer
-            target_end = min(amp_len, current_pos + self.sanger_read_span)
+            if step == 1:
+                search_win = (35, min(350, amp_len // 2))
+            else:
+                search_win = (max(0, current_pos - 150), min(amp_len - 35, current_pos + 150))
 
             sub_design = universal_designer.design_universal_primer(
                 amplicon_msa,
                 direction="FORWARD",
-                target_subregion_start=target_start,
-                target_subregion_end=target_end
+                search_window=search_win,
+                col_freqs=col_freqs
             )
 
             primer_data = sub_design.get("selected_primer")
@@ -87,9 +93,9 @@ class SangerTiler:
                 # If no primer found at this exact window, advance slightly
                 current_pos += 150
 
-        # Always ensure a terminal reverse primer is included
+        # Always ensure a terminal reverse primer is included if found
         rev_res = universal_designer.design_universal_primer(
-            amplicon_msa, direction="REVERSE"
+            amplicon_msa, direction="REVERSE", col_freqs=col_freqs
         )
         if rev_res.get("selected_primer"):
             rev_p = rev_res["selected_primer"]

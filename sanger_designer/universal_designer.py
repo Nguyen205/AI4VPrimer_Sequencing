@@ -148,12 +148,17 @@ class UniversalSangerDesigner:
                     matches += 1
             return round((matches / num_seqs) * 100.0, 2)
 
+        # High-performance set lookup for 2-fold degenerate primers
+        variants_set = set(expand_iupac_variants(primer_seq))
         for s in sequences:
             sub = s[start_col:end_col]
-            if '-' in sub or '.' in sub or len(sub) != p_len:
-                continue
-            if all(iupac_matches(primer_seq[k], sub[k]) for k in range(p_len)):
+            if sub in variants_set:
                 matches += 1
+            elif '-' in sub or '.' in sub or len(sub) != p_len:
+                continue
+            elif any(c not in "ACGT" for c in sub):
+                if all(iupac_matches(primer_seq[k], sub[k]) for k in range(p_len)):
+                    matches += 1
 
         return round((matches / num_seqs) * 100.0, 2)
 
@@ -163,7 +168,9 @@ class UniversalSangerDesigner:
         direction: str = "FORWARD",
         target_subregion_start: Optional[int] = None,
         target_subregion_end: Optional[int] = None,
-        exclude_range: Optional[Tuple[int, int]] = None
+        exclude_range: Optional[Tuple[int, int]] = None,
+        col_freqs: Optional[List[Dict[str, float]]] = None,
+        search_window: Optional[Tuple[int, int]] = None
     ) -> Dict:
         """
         Designs the optimal universal Sanger sequencing primer.
@@ -172,15 +179,54 @@ class UniversalSangerDesigner:
         :param target_subregion_start: Start index of the target subregion (e.g. variable region) relative to amplicon.
         :param target_subregion_end: End index of target subregion.
         :param exclude_range: Optional (start, end) column range to strictly prevent forward/reverse overlap.
+        :param col_freqs: Optional precalculated column frequencies.
+        :param search_window: Optional explicit (min_pos, max_pos) tuple.
         :return: Dict containing selected candidate, tier level, concentration instructions, and runner-ups.
         """
         amp_len = len(amplicon_msa[0])
         num_seqs = len(amplicon_msa)
-        col_freqs = get_column_frequencies(amplicon_msa)
+        if col_freqs is None:
+            col_freqs = get_column_frequencies(amplicon_msa)
+
+        # Precompute per-column consensus metrics
+        min_cov_ratio = self.min_coverage_pct / 100.0
+
+        top1_bases = []
+        top1_freqs = []
+        top2_bases = []
+        top2_iupacs = []
+        top2_freqs = []
+
+        for c in range(amp_len):
+            freq = col_freqs[c]
+            if not freq:
+                top1_bases.append('N')
+                top1_freqs.append(0.0)
+                top2_bases.append(None)
+                top2_iupacs.append(None)
+                top2_freqs.append(0.0)
+                continue
+
+            sorted_b = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+            top1_bases.append(sorted_b[0][0])
+            top1_freqs.append(sorted_b[0][1])
+
+            if len(sorted_b) >= 2:
+                top2_freqs.append(sorted_b[0][1] + sorted_b[1][1])
+                pair = frozenset([sorted_b[0][0], sorted_b[1][0]])
+                top2_bases.append((sorted_b[0][0], sorted_b[1][0]))
+                top2_iupacs.append(IUPAC_TWO_FOLD.get(pair))
+            else:
+                top2_freqs.append(sorted_b[0][1])
+                top2_bases.append(None)
+                top2_iupacs.append(None)
 
         # Determine search window boundaries
-        # Ensure Forward and Reverse are strictly partitioned to 5' and 3' halves on short/moderate amplicons
-        if direction.upper() == "FORWARD":
+        if search_window is not None:
+            min_pos, max_pos = search_window
+            min_pos = max(0, min(amp_len - self.min_len, min_pos))
+            max_pos = max(min_pos + self.min_len, min(amp_len, max_pos))
+        elif direction.upper() == "FORWARD":
             if target_subregion_start is not None:
                 max_pos = max(0, target_subregion_start - self.dye_blob_buffer)
                 min_pos = max(0, max_pos - 250)
@@ -209,34 +255,42 @@ class UniversalSangerDesigner:
                     ex_start, ex_end = exclude_range
                     if not (end_idx <= ex_start or start_idx >= ex_end):
                         continue
-                
-                # Build consensus oligo from top base at each column
-                consensus_chars = []
-                valid_cols = True
-                
-                for c in range(start_idx, end_idx):
-                    freq = col_freqs[c]
-                    if not freq:
-                        valid_cols = False
-                        break
-                    top_base, _ = max(freq.items(), key=lambda x: x[1])
-                    consensus_chars.append(top_base)
 
-                if not valid_cols:
+                # CONSENSUS FILTER FOR TIER 1:
+                # If ANY position has top base frequency < min_cov_ratio (80%),
+                # the unambiguous primer can never achieve 80% coverage. Skip immediately!
+                if any(top1_freqs[c] < min_cov_ratio for c in range(start_idx, end_idx)):
                     continue
 
-                candidate_seq = "".join(consensus_chars)
+                # Build consensus oligo from top base at each column
+                candidate_seq = "".join(top1_bases[c] for c in range(start_idx, end_idx))
+                if 'N' in candidate_seq or '-' in candidate_seq:
+                    continue
+
                 final_seq = candidate_seq if direction.upper() == "FORWARD" else reverse_complement(candidate_seq)
 
+                # Fast biophysical pre-filter:
+                # 1. Homopolymers check
+                if check_homopolymers(final_seq, max_repeat=3):
+                    continue
+
+                # 2. Fast GC% check (40.0 - 60.0%)
+                gc_count = sum(1 for b in final_seq if b in ('G', 'C', 'S'))
+                gc_pct = (gc_count / p_len) * 100.0
+                if not (40.0 <= gc_pct <= 60.0):
+                    continue
+
+                # 3. Primer3 biophysical validation (Tm, Hairpin, Homodimer)
+                bio = evaluate_biophysics(final_seq, self.min_tm, self.max_tm)
+                if not bio["is_valid"]:
+                    continue
+
+                # 4. Alignment sequence coverage calculation
                 coverage = self._calculate_sequence_coverage(
                     candidate_seq, amplicon_msa, start_idx, end_idx
                 )
 
                 if coverage >= self.min_coverage_pct:
-                    bio = evaluate_biophysics(final_seq, self.min_tm, self.max_tm)
-                    if not bio["is_valid"]:
-                        continue
-
                     tier1_candidates.append({
                         "tier": 1,
                         "sequence": final_seq,
@@ -281,82 +335,109 @@ class UniversalSangerDesigner:
                     if not (end_idx <= ex_start or start_idx >= ex_end):
                         continue
 
-                # Scan windows and test introducing a single 2-fold degenerate base
-                for wobble_rel_pos in range(p_len):
-                    # STRICT 3'-END PROTECTION RULE:
-                    # No wobble allowed within the last 5 nucleotides of the 3' end!
-                    if direction.upper() == "FORWARD":
-                        if wobble_rel_pos >= (p_len - 5):
-                            continue
-                    else: # REVERSE primer
-                        if wobble_rel_pos < 5:
-                            continue
+                # MASTER CONSENSUS PRE-FILTER FOR TIER 2:
+                # Count positions with low consensus (< min_cov_ratio)
+                low_consensus_positions = [
+                    r for r, c in enumerate(range(start_idx, end_idx))
+                    if top1_freqs[c] < min_cov_ratio
+                ]
 
-                    candidate_iupac = []
-                    valid_window = True
+                # PRINCIPLE RULE: If >= 2 positions have low consensus,
+                # DISCARD WINDOW OF THIS 20nt IMMEDIATELY!
+                # (Because 1 degenerate base can only rescue 1 position)
+                if len(low_consensus_positions) >= 2:
+                    continue
 
-                    for rel_idx, col_idx in enumerate(range(start_idx, end_idx)):
-                        freq = col_freqs[col_idx]
-                        if not freq:
-                            valid_window = False
-                            break
+                # Identify the single wobble target position
+                if len(low_consensus_positions) == 1:
+                    wobble_rel_pos = low_consensus_positions[0]
+                else:
+                    # len(low_consensus_positions) == 0:
+                    # Target the single position with lowest top1 frequency
+                    # that satisfies the 3'-end protection rule
+                    valid_wobble_positions = [
+                        r for r in range(p_len)
+                        if (r < (p_len - 5) if direction.upper() == "FORWARD" else r >= 5)
+                    ]
+                    if not valid_wobble_positions:
+                        continue
+                    wobble_rel_pos = min(valid_wobble_positions, key=lambda r: top1_freqs[start_idx + r])
 
-                        if rel_idx == wobble_rel_pos:
-                            # Use top 2 bases
-                            sorted_b = sorted(freq.items(), key=lambda x: x[1], reverse=True)
-                            if len(sorted_b) >= 2:
-                                pair = frozenset([sorted_b[0][0], sorted_b[1][0]])
-                                iupac_char = IUPAC_TWO_FOLD.get(pair)
-                                if iupac_char:
-                                    candidate_iupac.append(iupac_char)
-                                else:
-                                    valid_window = False
-                                    break
-                            else:
-                                valid_window = False
-                                break
-                        else:
-                            # Use consensus base
-                            top_b = max(freq.items(), key=lambda x: x[1])[0]
-                            candidate_iupac.append(top_b)
-
-                    if not valid_window:
+                # STRICT 3'-END PROTECTION RULE:
+                # No wobble allowed within the last 5 nucleotides of the 3' end!
+                if direction.upper() == "FORWARD":
+                    if wobble_rel_pos >= (p_len - 5):
+                        continue
+                else: # REVERSE primer (3' end is at relative 0..4 of top strand)
+                    if wobble_rel_pos < 5:
                         continue
 
-                    top_strand_seq = "".join(candidate_iupac)
-                    final_seq = top_strand_seq if direction.upper() == "FORWARD" else reverse_complement(top_strand_seq)
+                wobble_col = start_idx + wobble_rel_pos
 
-                    coverage = self._calculate_sequence_coverage(
-                        top_strand_seq, amplicon_msa, start_idx, end_idx
-                    )
+                # Check top-2 base combined frequency >= min_cov_ratio
+                if top2_freqs[wobble_col] < min_cov_ratio:
+                    continue
 
-                    if coverage >= self.min_coverage_pct:
-                        bio = evaluate_biophysics(final_seq, self.min_tm, self.max_tm)
-                        if not bio["is_valid"]:
-                            continue
+                iupac_char = top2_iupacs[wobble_col]
+                if not iupac_char:
+                    continue
 
-                        tier2_candidates.append({
-                            "tier": 2,
-                            "sequence": final_seq,
-                            "order_sequence": final_seq,
-                            "direction": direction.upper(),
-                            "start_col": start_idx,
-                            "end_col": end_idx,
-                            "length": p_len,
-                            "tm": bio["tm"],
-                            "gc_pct": bio["gc_pct"],
-                            "hairpin_dg": bio["hairpin_dg"],
-                            "homodimer_dg": bio["homodimer_dg"],
-                            "coverage_pct": coverage,
-                            "degeneracy_fold": 2,
-                            "wobble_position_from_5prime": wobble_rel_pos + 1 if direction.upper() == "FORWARD" else p_len - wobble_rel_pos,
-                            "requires_2x_concentration": True,
-                            "concentration_recommendation": (
-                                "⚠️ Double primer concentration: Use 6.4 pmol per 10 uL reaction "
-                                "(2x standard) to compensate for 50% signal dilution from the 2-fold degenerate oligo."
-                            ),
-                            "notes": "Tier 2 Fallback: 2-fold degenerate base safely placed outside the 3' anchor zone."
-                        })
+                # Construct degenerate primer sequence
+                candidate_chars = []
+                for r, c in enumerate(range(start_idx, end_idx)):
+                    if r == wobble_rel_pos:
+                        candidate_chars.append(iupac_char)
+                    else:
+                        candidate_chars.append(top1_bases[c])
+
+                if 'N' in candidate_chars or '-' in candidate_chars:
+                    continue
+
+                top_strand_seq = "".join(candidate_chars)
+                final_seq = top_strand_seq if direction.upper() == "FORWARD" else reverse_complement(top_strand_seq)
+
+                # Fast biophysical pre-filter
+                if check_homopolymers(final_seq, max_repeat=3):
+                    continue
+
+                gc_count = sum(1 for b in final_seq if b in ('G', 'C', 'S'))
+                gc_pct = (gc_count / p_len) * 100.0
+                if not (40.0 <= gc_pct <= 60.0):
+                    continue
+
+                # Primer3 biophysical validation
+                bio = evaluate_biophysics(final_seq, self.min_tm, self.max_tm)
+                if not bio["is_valid"]:
+                    continue
+
+                # Coverage calculation across alignment
+                coverage = self._calculate_sequence_coverage(
+                    top_strand_seq, amplicon_msa, start_idx, end_idx
+                )
+
+                if coverage >= self.min_coverage_pct:
+                    tier2_candidates.append({
+                        "tier": 2,
+                        "sequence": final_seq,
+                        "order_sequence": final_seq,
+                        "direction": direction.upper(),
+                        "start_col": start_idx,
+                        "end_col": end_idx,
+                        "length": p_len,
+                        "tm": bio["tm"],
+                        "gc_pct": bio["gc_pct"],
+                        "hairpin_dg": bio["hairpin_dg"],
+                        "homodimer_dg": bio["homodimer_dg"],
+                        "coverage_pct": coverage,
+                        "degeneracy_fold": 2,
+                        "wobble_position_from_5prime": wobble_rel_pos + 1 if direction.upper() == "FORWARD" else p_len - wobble_rel_pos,
+                        "requires_2x_concentration": True,
+                        "concentration_recommendation": (
+                            "⚠️ Double primer concentration: Use 6.4 pmol per 10 uL reaction "
+                            "(2x standard) to compensate for 50% signal dilution from the 2-fold degenerate oligo."
+                        ),
+                        "notes": "Tier 2 Fallback: 2-fold degenerate base safely placed outside the 3' anchor zone."
+                    })
 
         if tier2_candidates:
             tier2_candidates.sort(key=lambda x: (-x["coverage_pct"], abs(x["tm"] - self.ideal_tm)))
